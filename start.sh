@@ -1,29 +1,31 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
-# 1) FastChat controller
-python3 -m fastchat.serve.controller \
-  --host 0.0.0.0 --port "${CONTROLLER_PORT}" &
+echo "Prewarming model cache..."
+python - <<'PY'
+import os
+from llava.model.builder import load_pretrained_model
+from llava.mm_utils import get_model_name_from_path
 
-# 2) OpenAI-compatible API server (serves /v1/* on port 8000)
-python3 -m fastchat.serve.openai_api_server \
-  --host 0.0.0.0 --port "${API_PORT}" \
-  --controller "http://127.0.0.1:${CONTROLLER_PORT}" &
+model_id = os.environ.get("MODEL_ID", "liuhaotian/llava-v1.5-7b")
+quant = os.environ.get("QUANTIZE", "4bit").lower()
+load_4bit = quant == "4bit"
+load_8bit = quant == "8bit"
 
-# 3) Gradio UI for quick manual tests
-python3 -m llava.serve.gradio_web_server \
-  --host 0.0.0.0 --port "${GRADIO_PORT}" \
-  --controller "http://127.0.0.1:${CONTROLLER_PORT}" &
+model_name = get_model_name_from_path(model_id)
+print(f"[PRELOAD] {model_id} (quant={quant})")
 
-# 4) LLaVA model worker 
-EXTRA_ARGS=""
-if [ "${LOAD_4BIT}" = "true" ]; then
-  EXTRA_ARGS="--load-4bit"
-fi
+# This downloads & initializes once to warm the HF cache
+load_pretrained_model(
+    model_path=model_id,
+    model_base=None,
+    model_name=model_name,
+    load_8bit=load_8bit,
+    load_4bit=load_4bit,
+    device_map="auto",
+)
+print("[PRELOAD] Done.")
+PY
 
-python3 -m llava.serve.model_worker \
-  --model-path "${MODEL_PATH}" \
-  --model-name "${MODEL_NAME}" \
-  --controller "http://127.0.0.1:${CONTROLLER_PORT}" \
-  --host 0.0.0.0 --port "${WORKER_PORT}" \
-  ${EXTRA_ARGS}
+echo "Starting API on :${PORT:-8000}"
+exec uvicorn serve:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
