@@ -51,7 +51,7 @@ model = LlavaForConditionalGeneration.from_pretrained(
 ).to(device)
 
 processor = LlavaProcessor.from_pretrained(MODEL_PATH)
-print("Model loaded.")
+print("Model loaded successfully.")
 
 def handler(event):
     prompt = event["input"].get("prompt", "")
